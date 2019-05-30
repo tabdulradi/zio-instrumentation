@@ -1,6 +1,7 @@
 package zio.instrumentation
 
 import scalaz.zio._
+import scalaz.zio.console._
 
 /** Poor man's union types */
 sealed trait TracingValue
@@ -26,16 +27,16 @@ object Tracing extends Serializable {
     type Span
 
     def currentSpan: FiberLocal[Span]
-    final def inAChildSpan[R, E, A](
+    final def inAChildSpan[R <: Console, E, A](
       use: ZIO[R, E, A]
     )(operationName: String, tags: Seq[(String, TracingValue)]): ZIO[R, Any, A] = { // FIXME: Error is Any
       val acquire = for {
-        parent <- currentSpan.get.get // YOLO: Option.get
+        parent <- currentSpan.get.get
         span   <- startChild(parent, operationName)
         _      <- ZIO.foreach(tags) { case (k, v) => setTag(span, k, v) }
-      } yield (finish(span), currentSpan.locally(span)(use))
+      } yield (finish(span), currentSpan.locally(span)(use).fork)
 
-      ZIO.bracket(acquire)(_._1)(_._2) // TODO: FiberLocal.local ?
+      ZIO.bracket(acquire)(_._1)(_._2.flatMap(_.join)) // TODO: FiberLocal.local ?
     }
 
     /** Selected functionality from io.opentracing.{Tracer, Span} */
@@ -101,7 +102,7 @@ class OpenTracing(tracer: io.opentracing.Tracer, currentFiberLocal: FiberLocal[i
 }
 
 object TracingZioApi {
-  implicit class InstrumentedZIO[R <: Tracing, E, A](self: ZIO[R, E, A]) {
+  implicit class InstrumentedZIO[R <: Tracing with Console, E, A](self: ZIO[R, E, A]) {
     def instrumented(operationName: String, tags: (String, TracingValue)*): ZIO[R, Any, A] = // FIXME: Error is Any
       ZIO.access[Tracing](_.tracing).flatMap(_.inAChildSpan(self)(operationName, tags))
   }
@@ -114,8 +115,6 @@ object TracingZioApi {
   }
 
 }
-
-import scalaz.zio.console._
 
 object MyApp extends App {
   import TracingZioApi._
@@ -140,14 +139,17 @@ object MyApp extends App {
 
   val myAppLogic =
     for {
-      _ <- putStrLn("Hello1") // .instrumented("parent1") // FIXME: instrumentation this fails at runtime, but other lines are fine
-      _ <- readAndPrintName.instrumented("parent2")
+      _ <- doSomething(1).instrumented("parent1")
+      _ <- doSomething(2).instrumented("parent2")
+      _ <- doSomething(3).instrumented("parent3")
     } yield ()
 
-  val readAndPrintName =
+  def doSomething(n: Int) =
     for {
-      _ <- putStrLn(s"hello2").instrumented("child", "foo" -> "bar")
-      _ <- log("LEVEL" -> "DEBUG", "userId" -> "123", "isFoo" -> true)
-      _ <- putStrLn(s"Hello3!") //.instrumented("child2")
+      _ <- putStrLn(s"Child 1 of Parent $n").instrumented(s"child1-of-parent$n", "child" -> 1, "parent"  -> n)
+      _ <- log("LEVEL" -> "DEBUG", 
+               "n" -> n, 
+               "isFoo" -> true)
+      _ <- putStrLn(s"Child 2 of Parent $n").instrumented(s"child2-of-parent$n", "child" -> 2, "parent"  -> n)
     } yield ()
 }
