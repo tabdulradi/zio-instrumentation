@@ -94,19 +94,13 @@ object Tracing extends Serializable {
     def log(fields: (String, TracingValue)*): IO[Any, Unit]
   }
 
-  // FIXME: Won't work, instantiation has to happen at the edge of the world, to be mixed-in with rest of dependencies
-  // def make[Span](tracer: Tracer[Span]): UIO[Tracing] =
-  //   for {
-  //     currentSpan <- FiberLocal.make[Span]
-  //   } yield new Live(tracer, currentSpan)
-
-  class Live[Span](tracer: Tracer[Span], val currentSpan: FiberLocal[Span]) extends Tracing {
+  class Live[Span](tracer: Tracer[Span], val currentSpan: FiberRef[Span]) extends Tracing {
     override val tracing: Tracing.Service = new Tracing.Service {
       override def inAChildSpan[R <: Console, E, A](
         use: ZIO[R, E, A]
       )(operationName: String, tags: Seq[(String, TracingValue)]): ZIO[R, Any, A] = { // FIXME: Error is Any
         val acquire = for {
-          parent <- currentSpan.get.get
+          parent <- currentSpan.get
           span   <- tracer.startChild(parent, operationName)
           _      <- ZIO.foreach(tags) { case (k, v) => tracer.setTag(span, k, v) }
         } yield (tracer.finish(span), currentSpan.locally(span)(use).fork)
@@ -115,7 +109,7 @@ object Tracing extends Serializable {
       }
 
       override def log(fields: (String, TracingValue)*) =
-        currentSpan.get.get.flatMap(tracer.log(_, fields))
+        currentSpan.get.flatMap(tracer.log(_, fields))
     }
   }
 }
@@ -173,19 +167,22 @@ object MyApp extends App {
   // Fixme: Instantiation is a bit cumbersome
   def run(args: List[String]) =
     for {
-      currentSpan <- FiberLocal.make[io.opentracing.Span]
       tracer      <- UIO(tracerConf.getTracer)
-      r           = new Tracing.Live(new OpenTracingTracer(tracer), currentSpan) with Console.Live
       rootSpan    <- UIO(tracer.buildSpan("REQUEST-ROOT").start())
+      currentSpan <- FiberRef.make(rootSpan: io.opentracing.Span)
+      r           = new Tracing.Live(new OpenTracingTracer(tracer), currentSpan) with Console.Live
       res         <- currentSpan.locally(rootSpan)(myAppLogic.fold(_ => 1, _ => 0).provide(r))
       _           <- UIO(rootSpan.finish())
     } yield res
 
   val myAppLogic =
     for {
-      _ <- doSomething(1).instrumented("parent1")
-      _ <- doSomething(2).instrumented("parent2")
-      _ <- doSomething(3).instrumented("parent3")
+      _      <- doSomething(1).instrumented("parent1")
+      fiber1 <- doSomething(2).instrumented("parent2").fork
+      fiber2 <- doSomething(3).instrumented("parent3").fork
+      _      <- doSomething(4).instrumented("parent4")
+      _      <- fiber1.join
+      _      <- fiber2.join
 
       _ <- nonManuallyInstrumented(1).autoInstrument
       _ <- nonManuallyInstrumented(2).autoInstrument
