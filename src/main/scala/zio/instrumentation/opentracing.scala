@@ -1,6 +1,7 @@
-package zio.instrumentation
+package scalaz.zio
+// package instrumentation
 
-import scalaz.zio._
+// import scalaz.zio._
 import scalaz.zio.console._
 
 /** Poor man's union types */
@@ -123,6 +124,38 @@ object TracingZioApi {
   implicit class InstrumentedZIO[R <: Tracing with Console, E, A](self: ZIO[R, E, A]) {
     def instrumented(operationName: String, tags: (String, TracingValue)*): ZIO[R, Any, A] = // FIXME: Error is Any
       ZIO.access[Tracing](_.tracing).flatMap(_.inAChildSpan(self)(operationName, tags))
+
+    // TODO: Try to infer operationName from stacktrace
+    def autoInstrument[X1]: ZIO[R, Any, A] = self.tag match {
+      case ZIO.Tags.FlatMap =>
+        val flatMap = self.asInstanceOf[ZIO.FlatMap[R, E, X1, A]]
+        new ZIO.FlatMap(flatMap.zio.autoInstrument, flatMap.k).instrumented("FlatMap")
+      case ZIO.Tags.Succeed =>
+        self.instrumented("Succeed")
+      case ZIO.Tags.EffectTotal =>
+        self.instrumented("EffectTotal")
+      case ZIO.Tags.Fail            => ???
+      case ZIO.Tags.Fold            => ???
+      case ZIO.Tags.InterruptStatus => ???
+      case ZIO.Tags.CheckInterrupt  => ???
+      case ZIO.Tags.EffectPartial   => ???
+      case ZIO.Tags.EffectAsync     => ???
+      case ZIO.Tags.Fork            => ???
+      case ZIO.Tags.SuperviseStatus => ???
+      case ZIO.Tags.Descriptor      => ???
+      case ZIO.Tags.Lock            => ???
+      case ZIO.Tags.Yield           => ???
+      case ZIO.Tags.Access =>
+        val read = self.asInstanceOf[ZIO.Read[R, E, A]]
+        new ZIO.Read((r: R) => read.k(r).autoInstrument).instrumented("Read")
+      case ZIO.Tags.Provide        => ???
+      case ZIO.Tags.SuspendWith    => ???
+      case ZIO.Tags.FiberRefNew    => ???
+      case ZIO.Tags.FiberRefModify => ???
+      case ZIO.Tags.Trace          => ???
+      case ZIO.Tags.TracingStatus  => ???
+      case ZIO.Tags.CheckTracing   => ???
+    }
   }
 
   def log(fields: (String, TracingValue)*) = ZIO.access[Tracing](_.tracing.log(fields: _*))
@@ -137,7 +170,7 @@ object MyApp extends App {
       .withSampler(SamplerConfiguration.fromEnv().withType("const").withParam(1))
       .withReporter(ReporterConfiguration.fromEnv().withLogSpans(true))
 
-  // Fixme: Instantiation is a bit cumbersome 
+  // Fixme: Instantiation is a bit cumbersome
   def run(args: List[String]) =
     for {
       currentSpan <- FiberLocal.make[io.opentracing.Span]
@@ -153,12 +186,23 @@ object MyApp extends App {
       _ <- doSomething(1).instrumented("parent1")
       _ <- doSomething(2).instrumented("parent2")
       _ <- doSomething(3).instrumented("parent3")
+
+      _ <- nonManuallyInstrumented(1).autoInstrument
+      _ <- nonManuallyInstrumented(2).autoInstrument
+      _ <- nonManuallyInstrumented(3).autoInstrument
     } yield ()
 
   def doSomething(n: Int) =
     for {
       _ <- putStrLn(s"Child 1 of Parent $n").instrumented(s"child1-of-parent$n", "child" -> 1, "parent"  -> n)
-      _ <- log("LEVEL" -> "DEBUG", "n" -> n, "isFoo" -> true)
+      _ <- log("LEVEL"                                                                   -> "DEBUG", "n" -> n, "isFoo" -> true)
       _ <- putStrLn(s"Child 2 of Parent $n").instrumented(s"child2-of-parent$n", "child" -> 2, "parent"  -> n)
+    } yield ()
+
+  def nonManuallyInstrumented(n: Int) =
+    for {
+      _ <- putStrLn(s"Child 1 of Parent $n")
+      _ <- putStrLn(s"Child 2 of Parent $n")
+      _ <- putStrLn(s"Child 3 of Parent $n")
     } yield ()
 }

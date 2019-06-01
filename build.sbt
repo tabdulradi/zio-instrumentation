@@ -25,10 +25,10 @@ developers := List(
 )
 
 libraryDependencies ++= Seq(
-  "org.scalaz"       %% "scalaz-zio"   % "1.0-RC4",
-  "io.opentracing" % "opentracing-api" % "0.31.0",
+  "org.scalaz"       %% "scalaz-zio"   % "1.0-RC5",
+  "io.opentracing"   % "opentracing-api" % "0.31.0",
   "io.jaegertracing" % "jaeger-client" % "0.32.0",
-  "ch.qos.logback" % "logback-classic" % "1.0.13",
+  "ch.qos.logback"   % "logback-classic" % "1.0.13",
   compilerPlugin("org.spire-math" %% "kind-projector" % "0.9.10")
 )
 
