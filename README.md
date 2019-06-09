@@ -1,7 +1,15 @@
 # zio-instrumentation
 Allows instrumenting IO applications, mainly via OpenTracing integration, but also capable of integration with not-opentracing-but-close-enough tools like AWS X-Ray.
 
+## Project Goals
+
+- Provide ability to manually instrument ZIO applications (Must)
+- Support multiple vendors  (Must)
+- Integrates with manually instrumented Cats effect libraries (Nice to have)
+- Provide ability to autimatically instrument ZIO applications (Nice to have)
+
 ## How to run examples
+
 1. Run Jaeger (or any other Open Tracing Backend)
 ```bash
 docker run -d --name jaeger \
